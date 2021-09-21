@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFmpeg Transmitter</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.3/css/bulma.min.css">
+  <style>
+    .blink {
+      animation: blinker 1.5s linear infinite;
+    }
+
+    .fade-enter-active,
+    .fade-leave-active {
+      transition: opacity .5s;
+    }
+
+    .fade-enter,
+    .fade-leave-to {
+      opacity: 0;
+    }
+
+    #output {
+      max-height: 300px;
+      overflow: auto;
+      padding-bottom: 50px;
+    }
+
+    #connected > span {
+      content: '';
+      width: 12px;
+      height: 12px;
+      margin-right: 5px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    #live {
+      cursor: auto;
+    }
+
+    @keyframes blinker {
+      50% {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div class="hero is-fullheight is-medium is-light is-bold">
+      <div class="hero-body">
+        <div class="container">
+          <div class="columns is-centered">
+            <div class="column">
+              <article class="card">
+                <div class="card-content">
+                  <h1 class="title has-text-black has-text-centered">
+                    FFmpeg Transmitter
+                    <div id="connected" class="is-pulled-right is-size-6 has-text-weight-normal">
+                      <span :class="[isSocketConnected ? 'has-background-success' : 'has-background-danger', { blink: isSocketConnected }]"></span>
+                      {{ isSocketConnected ? 'Conectado' : 'Desconectado' }}
+                    </div>
+                  </h1>
+                  <div class="is-clearfix"></div>
+                  <form>
+                    <div class="field is-horizontal">
+                      <div class="field-label is-normal">
+                        <label class="label">Dispositivo de entrada</label>
+                      </div>
+                      <div class="field-body">
+                        <div class="field">
+                          <div class="control">
+                            <div class="select">
+                              <select v-model="audioSource" @change="handleAudioSourceChange" :disabled="isStreaming">
+                                <option v-for="device in devices" :value="device.deviceId">{{ device.label }}</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="field is-horizontal">
+                      <div class="field-label"></div>
+                      <div class="field-body">
+                        <div class="field">
+                          <progress id="vumeter" class="progress is-success is-small" value="0" max="100"></progress>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="field is-horizontal">
+                      <div class="field-label is-normal">
+                        <label class="label">Codec</label>
+                      </div>
+                      <div class="field-body">
+                        <div class="field">
+                          <div class="control is-expanded">
+                            <div class="select">
+                              <select v-model="codec" :disabled="isStreaming">
+                                <option v-for="codec in availableCodecs" :value="codec.name">{{ codec.description }} [{{ codec.name }}]</option>
+                              </select>
+                            </div>
+                          </div>
+                          <label class="checkbox">
+                            <input type="checkbox" v-model="advancedCodecs">
+                            Modo avançado
+                          </label>
+                        </div>
+                        <div class="field">
+                          <div class="control is-expanded">
+                            <input class="input" :disabled="isStreaming" v-model="bitrate" placeholder="Bitrate" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="field is-horizontal is-grouped">
+                      <div class="field-label is-normal">
+                        <label class="label">Endereço para transmissão</label>
+                      </div>
+                      <div class="field-body">
+                        <div class="field">
+                          <div class="control">
+                            <input :class="[{ 'is-danger': formErrors.address }, 'input']" v-model="address"
+                              :disabled="isStreaming" @input="validateField('address')" placeholder="Endereço para transmissão" />
+                          </div>
+                          <p class="help is-danger" v-if="formErrors.address">Endereço para tranmissão é obrigatório</p>
+                        </div>
+                        <div class="field is-flex-grow-0">
+                          <div class="control">
+                            <input :class="[{ 'is-danger': formErrors.port }, 'input']" v-model="port" :disabled="isStreaming" @input="validateField('port')" placeholder="Porta" />
+                          </div>
+                          <p class="help is-danger" v-if="formErrors.port">Porta para transmissão é obrigatório</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="field is-horizontal">
+                      <div class="field-label">
+                        <button class="button is-danger has-text-white has-text-weight-bold blink"
+                          v-if="isStreaming" id="live">LIVE</button>
+                      </div>
+                      <div class="field-body">
+                        <div class="field is-grouped">
+                          <div class="control is-expanded">
+                            <button class="button is-link is-fullwidth" @click.prevent="handleStart" 
+                              :disabled="!isSocketConnected || isStreaming">Iniciar tranmissão</button>
+                          </div>
+                          <div class="control">
+                            <button class="button is-danger is-fullwidth" @click.prevent="handleStop"
+                              :disabled="!isStreaming">Parar transmissão</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <label class="checkbox is-pulled-right">
+                      <input type="checkbox" v-model="showOutput">
+                      Log output
+                    </label>
+                    <div class="is-clearfix"></div>
+                  </form>
+                </div>
+              </article>
+              <br />
+              <article class="message is-light">
+                <div class="message-body has-text-centered is-size-5">
+                  <span class="has-text-weight-bold">Preview:</span> ffmpeg -vn -f alsa -i sysdefault:CARD=<span
+                    class="has-text-danger">{{audioSource}}</span> -acodec <span
+                    class="has-text-info">{{codec}}</span>{{bitrate ? ' -b:a ' : ''}}<span
+                    class="has-text-link">{{bitrate}}</span> -f rtp rtp://<span
+                    class="has-text-success">{{address}}</span><span class="has-text-grey">{{port ? `:${port}` :
+                    ''}}</span>
+                </div>
+              </article>
+              <transition name="fade">
+                <article class="message is-success" v-if="realUsedCommand !== ''">
+                  <div class="message-body has-text-centered is-size-5">
+                    <span class="has-text-weight-bold">Comando real utilizado: </span> {{realUsedCommand}}
+                  </div>
+                </article>
+              </transition>
+              <transition name="fade">
+                <article class="message is-danger" v-if="errorLines !== ''">
+                  <div class="message-body has-text-centered is-size-5">
+                    <span class="has-text-weight-bold">Erro do FFmpeg:<br /></span> {{errorLines}}
+                  </div>
+                </article>
+              </transition>
+              <article class="message is-info" v-if="showOutput && isStreaming">
+                <div class="message-body is-size-5" id="output">
+                  <span class="has-text-weight-bold">FFmpeg Output:<br /></span> {{errorLines}}
+                  <p v-for="line in outputLines">{{ line }}</p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.socket.io/3.1.3/socket.io.min.js"
+    integrity="sha384-cPwlPLvBTa3sKAgddT6krw0cJat7egBga3DJepJyrLl4Q9/5WLra3rrnMcyTyOnh"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+  <script type="text/javascript">
+    const API_URL = "http://localhost:3000";
+    const BASIC_MODE_CODECS = ['libmp3lame', 'opus', 'libopus'];
+    const DEFAULT_CODEC = "libmp3lame"
+
+    function keepBottomPosition(force) {
+      const div = document.getElementById("output");
+      const isScrolledToBottom = div.scrollHeight - div.clientHeight <= div.scrollTop + 100;
+      if(isScrolledToBottom || force) {
+        div.scrollTop = div.scrollHeight - div.clientHeight;
+      }
+    }
+
+    let microphone;
+    let javascriptNode;
+    let lastContext;
+    let analyser;
+
+    function handleVUMeter (stream) {
+      if(lastContext) {
+        microphone.disconnect(analyser);
+        analyser.disconnect(javascriptNode);
+        javascriptNode.disconnect(lastContext.destination);
+      }
+      const audioContext = new AudioContext();
+      analyser = audioContext.createAnalyser();
+      microphone = audioContext.createMediaStreamSource(stream);
+      javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+
+      analyser.smoothingTimeConstant = 0.8;
+      analyser.fftSize = 1024;
+
+      microphone.connect(analyser);
+      analyser.connect(javascriptNode);
+      javascriptNode.connect(audioContext.destination);
+      javascriptNode.onaudioprocess = function () {
+        const array = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(array);
+        let values = 0;
+        const length = array.length;
+
+        for (var i = 0; i < length; i++) {
+          values += (array[i]);
+        }
+
+        const average = values / length;
+        document.querySelector('#vumeter').value = average;
+      }
+
+      lastContext = audioContext;
+    }
+
+    const app = new Vue({
+      el: '#app',
+      data: {
+        audioSource: "",
+        codec: "",
+        address: "",
+        port: "",
+        bitrate: "",
+        realUsedCommand: "",
+        errorLines: "",
+        devices: [],
+        codecs: [],
+        outputLines: [],
+        isStreaming: false,
+        userStream: null,
+        mediaRecorder: null,
+        socket: null,
+        showOutput: false,
+        advancedCodecs: false,
+        formErrors: { address: false, port: false }
+      },
+      computed: {
+        isSocketConnected() {
+          return this.socket !== null && this.socket.connected
+        },
+        formIsValid() {
+          return Object.values(this.formErrors).every(i => i === false)
+        },
+        availableCodecs() {
+          if (this.advancedCodecs) {
+            return this.codecs;
+          }
+
+          return this.codecs.filter(codec => BASIC_MODE_CODECS.includes(codec.name))
+        }
+      },
+      methods: {
+        async getUserDevices() {
+          const userDevices = await navigator.mediaDevices.enumerateDevices();
+          const inputDevices = userDevices.filter(device => device.kind === "audioinput")
+          this.devices = inputDevices;
+          this.audioSource = inputDevices[0].deviceId;
+        },
+        async getUserStream() {
+          const audioDeviceId = this.audioSource;
+          const constraints = {
+            video: false,
+            audio: {
+              deviceId: audioDeviceId ? { exact: audioDeviceId } : undefined
+            }
+          }
+          const userStream = await navigator.mediaDevices.getUserMedia(constraints);
+          this.userStream = userStream;
+          handleVUMeter(userStream);
+        },
+        sendStreamOptions() {
+          const options = {
+            address: this.address,
+            port: this.port,
+            codec: this.codec,
+            bitrate: this.bitrate
+          }
+          this.socket.emit("start-stream", options)
+        },
+        handleStart() {
+          this.validateFormFields();
+          if (!this.formIsValid) {
+            return
+          }
+          this.sendStreamOptions();
+          const mediaRecorderOptions = { mimeType: 'audio/webm', bitsPerSecond: 100000 };
+          try {
+            mediaRecorder = new MediaRecorder(this.userStream, mediaRecorderOptions);
+            // console.log('Created MediaRecorder', mediaRecorder);
+
+            mediaRecorder.onstop = () => {
+              // console.log('Recorder stopped')
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+              if (event.data && event.data.size > 0) {
+                this.socket.emit('stream-data', event.data);
+              }
+            }
+
+            mediaRecorder.start(10);
+            this.isStreaming = true;
+            this.mediaRecorder = mediaRecorder;
+            // console.log('MediaRecorder started');
+            if(this.showOutput) setTimeout(() => keepBottomPosition(true), 1000)
+          } catch (error) {
+            alert('MediaRecord is not supported by this browser')
+            console.error('Error to initialize MediaRecorder', error);
+          }
+        },
+        handleStop() {
+          this.mediaRecorder.stop();
+          this.isStreaming = false;
+          this.realUsedCommand = "";
+        },
+        handleAudioSourceChange() {
+          if (this.userStream !== null) {
+            this.userStream.getTracks().forEach(track => {
+              track.stop();
+            });
+          }
+          this.getUserStream();
+        },
+        validateFormFields() {
+          const vm = this
+          Object.entries(this.formErrors).forEach(([field]) => vm.validateField(field))
+        },
+        validateField(fieldName) {
+          if (this.$data[fieldName] === "") {
+            this.formErrors[fieldName] = true;
+          } else {
+            this.formErrors[fieldName] = false;
+          }
+        },
+        setSocketEvents() {
+          this.socket.on("stream-started", (data) => {
+            this.realUsedCommand = data
+          })
+
+          this.socket.on("stream-error", (data) => {
+            this.errorLines = data
+          })
+
+          this.socket.on("stream-output", (output) => {
+            if(this.showOutput) {
+              this.outputLines.push(output);
+              keepBottomPosition(false);
+            }
+          })
+
+          this.socket.on("available-codecs", (availableCodecs) => {
+            this.codecs = availableCodecs;
+            this.codec = availableCodecs.find(codec => codec.name === DEFAULT_CODEC).name
+          })
+        }
+      },
+      mounted: async function () {
+        await this.getUserStream();
+        await this.getUserDevices();
+        this.socket = io.connect(API_URL);
+        this.setSocketEvents();
+      },
+    })
+  </script>
+</body>
+
+</html>

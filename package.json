@@ -1,0 +1,35 @@
+{
+  "name": "ffmpeg",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "nodemon --watch 'src/' --exec 'ts-node src/index.ts' -e ts",
+    "start": "node dist/index.js",
+    "compile": "tsc"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "fluent-ffmpeg": "^2.1.2",
+    "http-status-codes": "^2.1.4",
+    "module-alias": "^2.2.2",
+    "socket.io": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.13",
+    "@types/fluent-ffmpeg": "^2.1.18",
+    "@types/node": "^16.9.1",
+    "@typescript-eslint/eslint-plugin": "^4.31.0",
+    "@typescript-eslint/parser": "^4.31.0",
+    "eslint": "^7.32.0",
+    "eslint-import-resolver-alias": "^1.1.2",
+    "eslint-plugin-eslint-comments": "^3.2.0",
+    "eslint-plugin-import": "^2.24.2",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-sonarjs": "^0.10.0",
+    "nodemon": "^2.0.12",
+    "ts-node": "^10.2.1",
+    "typescript": "^4.4.3"
+  }
+}
